@@ -19,6 +19,7 @@ set -o pipefail
 # Predeclare variables so `set -u` (treat unset variables as errors) stays happy.
 SUDO=""
 ROLLBACK_REQUESTED=false
+DRY_RUN=false
 
 # usage prints the public help text (only documenting the supported user-facing flags).
 usage() {
@@ -84,11 +85,14 @@ rollback() {
 
 # Parse command-line switches before doing any installation work.
 # Note: -r is silently supported for internal testing but omitted from user-facing docs.
-while getopts ":rh" opt; do
+while getopts ":rhd" opt; do
   case "$opt" in
     r)
       # Hidden rollback flag toggles the cleanup flow.
       ROLLBACK_REQUESTED=true
+      ;;
+    d)
+      DRY_RUN=true
       ;;
     h)
       usage
@@ -100,8 +104,27 @@ while getopts ":rh" opt; do
       exit 1
       ;;
   esac
-done
+  done
 shift $((OPTIND - 1))
+
+# Dry run mode: print environment info and exit
+if [ "$DRY_RUN" = true ]; then
+  echo "AutoZSH dry run: environment check only."
+  echo "----------------------------------------"
+  echo "User: $(whoami)"
+  echo "Home directory: $HOME"
+  echo -n "apt available: "
+  if command -v apt >/dev/null 2>&1; then echo "yes"; else echo "no"; fi
+  echo -n "sudo available: "
+  if command -v sudo >/dev/null 2>&1; then echo "yes"; else echo "no"; fi
+  echo -n "Root privileges: "
+  if [ "$EUID" -eq 0 ]; then echo "yes"; else echo "no"; fi
+  echo -n "Internet connectivity: "
+  if curl -fsSL https://ohmyz.sh >/dev/null 2>&1; then echo "yes"; else echo "no"; fi
+  echo "----------------------------------------"
+  echo "No changes made."
+  exit 0
+fi
 
 # Exit early if the caller asked for a rollback-only run.
 if [ "$ROLLBACK_REQUESTED" = true ]; then
@@ -161,6 +184,11 @@ echo
 echo
 # Oh My Zsh bootstrap script sets up ~/.oh-my-zsh and drops a starter ~/.zshrc.
 echo "Installing Oh-My-Zsh..."
+# Remove existing .oh-my-zsh directory if it exists
+if [ -d "$HOME/.oh-my-zsh" ]; then
+  echo "Removing existing .oh-my-zsh directory..."
+  rm -rf "$HOME/.oh-my-zsh"
+fi
 if ! RUNZSH=no CHSH=no curl -fsSL "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh" | bash; then
   echo "Oh My Zsh installer failed; aborting." >&2
   exit 1
@@ -213,8 +241,8 @@ echo "Setting Powerlevel10k theme..."
 if grep -q 'ZSH_THEME="powerlevel10k/powerlevel10k"' "$HOME/.zshrc"; then
   echo "Theme already set."
 elif grep -q '^ZSH_THEME=' "$HOME/.zshrc"; then
-  # The `0,` trick ensures only the first match is swapped, preserving any custom blocks beneath it.
-  sed -i '0,/^ZSH_THEME=.*/s//ZSH_THEME="powerlevel10k\\/powerlevel10k"/' "$HOME/.zshrc"
+  # Use | as delimiter to avoid issues with slashes in the replacement string.
+  sed -i '0,/^ZSH_THEME=.*/s|^ZSH_THEME=.*|ZSH_THEME="powerlevel10k/powerlevel10k"|' "$HOME/.zshrc"
 else
   # Append at the end if the file never declared a theme; rare but safe.
   echo 'ZSH_THEME="powerlevel10k/powerlevel10k"' >> "$HOME/.zshrc"
