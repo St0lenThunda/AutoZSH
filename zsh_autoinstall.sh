@@ -194,6 +194,8 @@ ensure_clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$ZSH_CUST
 echo
 echo
 # Create a safety net before we start editing the user's configuration file.
+# Todo: consider allowing opt-out for heavy customizers who track dotfiles in git.
+
 if [ -f "$HOME/.zshrc" ]; then
   BACKUP_PATH="$HOME/.zshrc.autozsh.$(date +%Y%m%d%H%M%S).bak"
   if cp "$HOME/.zshrc" "$BACKUP_PATH"; then
