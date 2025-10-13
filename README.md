@@ -14,7 +14,7 @@ Opinionated one-shot installer for my preferred zsh environment.
 ## Quickstart
 
 ```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/StolenThunda/AutoZSH/master/zsh_autoinstall.sh)"
+curl -fsSL https://raw.githubusercontent.com/StolenThunda/AutoZSH/master/zsh_autoinstall.sh | bash
 ```
 
 The script prompts for `sudo` when needed. If `sudo` is not available, rerun the command as `root`.
@@ -48,13 +48,15 @@ These steps are interactive and must be completed manually inside zsh.
 ---
 
 ## Notes & limitations
-- The installer is not idempotent. Rerunning it without cleaning up may cause git clone failures or duplicate config entries.
-- Tested only on Debian-based systems. Other distros will need manual tweaks (`apt` replacements, fonts, etc.).
-- The script creates a timestamped `~/.zshrc` backup automatically, but keep your own copy if you rely on custom tweaks.
+- Idempotency: rerunning the script now pulls existing repos and merges plugin lists, but the `.zshrc` edits are still opinionated. Options: allow opting out of theme/plugin tweaks, expose flags for extra plugins, or template config snippets for easier customization.
+- Distribution support: everything assumes `apt` and Debian-like paths. Options: detect distro via `/etc/os-release` and branch to the right package manager, or bail with a clearer message when `apt` is missing.
+- Privilege requirements: package installs require root; the script shells out to `sudo` when possible. Consider adding a `--dry-run`/`--no-install` mode so users can review steps before elevating.
+- Interactive follow-up: prompt customization still needs `p10k configure` inside zsh. You could ship a prebuilt `.p10k.zsh` profile, or add a flag that copies one into place.
+- Backup strategy: the script writes timestamped `~/.zshrc.autozsh.*.bak` files. Heavy customizers may want to track dotfiles in version control for easier rollback.
 
 ---
 
 ## Roadmap ideas
-- Add idempotent checks around git clone and `~/.zshrc` edits
-- Optional flag for different font choices
-- Support for additional plugin bundles or theme variants
+- Add `--dry-run` and `--no-config` flags for safer reuse
+- Auto-detect distro/package manager (`dnf`, `pacman`, `brew`, etc.)
+- Offer optional prompt/profile presets (prebuilt `.p10k.zsh`, extra plugin sets)
