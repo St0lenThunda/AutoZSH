@@ -161,7 +161,7 @@ echo
 echo
 # Oh My Zsh bootstrap script sets up ~/.oh-my-zsh and drops a starter ~/.zshrc.
 echo "Installing Oh-My-Zsh..."
-if ! RUNZSH=no CHSH=no curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | bash"; then
+if ! RUNZSH=no CHSH=no curl -fsSL "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh" | bash; then
   echo "Oh My Zsh installer failed; aborting." >&2
   exit 1
 fi
