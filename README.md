@@ -14,7 +14,7 @@ Opinionated one-shot installer for my preferred zsh environment.
 ## Quickstart
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/StolenThunda/AutoZSH/master/zsh_autoinstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/St0lenThunda/AutoZSH/main/zsh_autoinstall.sh | bash
 ```
 
 The script prompts for `sudo` when needed. If `sudo` is not available, rerun the command as `root`.

@@ -14,7 +14,7 @@ set -o pipefail
 # - etc
 #
 # Installing from command line:
-# sh -c "$(curl -fsSL https://raw.githubusercontent.com/StolenThunda/AutoZSH/master/zsh_autoinstall.sh)"
+# bash -c "$(curl -fsSL https://raw.githubusercontent.com/St0lenThunda/AutoZSH/main/zsh_autoinstall.sh)"
 
 # Predeclare variables so `set -u` (treat unset variables as errors) stays happy.
 SUDO=""
@@ -161,7 +161,7 @@ echo
 echo
 # Oh My Zsh bootstrap script sets up ~/.oh-my-zsh and drops a starter ~/.zshrc.
 echo "Installing Oh-My-Zsh..."
-if ! RUNZSH=no CHSH=no sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"; then
+if ! RUNZSH=no CHSH=no bash -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"; then
   echo "Oh My Zsh installer failed; aborting." >&2
   exit 1
 fi
