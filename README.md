@@ -72,6 +72,5 @@ These steps are interactive and must be completed manually inside zsh.
 ---
 
 ## Roadmap ideas
-- Add `--dry-run` and `--no-config` flags for safer reuse
 - Auto-detect distro/package manager (`dnf`, `pacman`, `brew`, etc.)
 - Offer optional prompt/profile presets (prebuilt `.p10k.zsh`, extra plugin sets)

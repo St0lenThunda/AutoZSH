@@ -121,6 +121,20 @@ if [ "$DRY_RUN" = true ]; then
   if [ "$EUID" -eq 0 ]; then echo "yes"; else echo "no"; fi
   echo -n "Internet connectivity: "
   if curl -fsSL https://ohmyz.sh >/dev/null 2>&1; then echo "yes"; else echo "no"; fi
+  # Print detected package manager
+  PKG_MANAGER=""
+  if command -v apt >/dev/null 2>&1; then
+    PKG_MANAGER="apt"
+  elif command -v dnf >/dev/null 2>&1; then
+    PKG_MANAGER="dnf"
+  elif command -v pacman >/dev/null 2>&1; then
+    PKG_MANAGER="pacman"
+  elif command -v brew >/dev/null 2>&1; then
+    PKG_MANAGER="brew"
+  else
+    PKG_MANAGER="unknown"
+  fi
+  echo "Detected package manager: $PKG_MANAGER"
   echo "----------------------------------------"
   echo "No changes made."
   exit 0
@@ -152,6 +166,26 @@ if [ -n "$SUDO" ]; then
   echo "Using sudo for package installation. You may be prompted for your password."
   echo
   echo
+fi
+
+# Auto-detect package manager
+PKG_MANAGER=""
+if command -v apt >/dev/null 2>&1; then
+  PKG_MANAGER="apt"
+elif command -v dnf >/dev/null 2>&1; then
+  PKG_MANAGER="dnf"
+elif command -v pacman >/dev/null 2>&1; then
+  PKG_MANAGER="pacman"
+elif command -v brew >/dev/null 2>&1; then
+  PKG_MANAGER="brew"
+else
+  PKG_MANAGER="unknown"
+fi
+
+if [ "$PKG_MANAGER" != "apt" ]; then
+  echo "Detected package manager: $PKG_MANAGER"
+  echo "This installer currently supports Debian/Ubuntu systems with apt only."
+  exit 1
 fi
 
 # ensure_clone is a reusable helper that keeps git repositories up to date without breaking re-runs.
