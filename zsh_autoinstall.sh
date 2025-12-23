@@ -1,13 +1,38 @@
 #!/bin/bash
-# Safety first: strict mode
+# ==============================================================================
+# AutoZSH Installer - Educational Edition
+# ==============================================================================
+# This script is designed/documented to double as a teaching tool for Bash scripting.
+# It covers:
+# - Strict mode (set -u, pipefail) for safety
+# - Function modularity and code organization
+# - ANSI escape codes for coloring output
+# - Local vs Global variables
+# - Interactive menus using raw input reading
+# - Robust idempotency (checking state before acting)
+
+# ------------------------------------------------------------------------------
+# SAFETY SETTINGS (Strict Mode)
+# ------------------------------------------------------------------------------
+# `set -u` (nounset): Treat unset variables as an error when substituting.
+# This prevents disastrous bugs like `rm -rf /$UNSET_VAR` becoming `rm -rf /`.
 set -u
+
+# `set -o pipefail`: The return value of a pipeline is the status of the last
+# command to exit with a non-zero status, or zero if no command exited with a non-zero status.
+# By default, bash only returns the exit code of the *last* command in a pipe.
+# We want to know if `curl` failed in `curl | bash`.
 set -o pipefail
-# We won't use set -e globally because we want to handle some errors manually, 
-# but we will check exit codes for critical steps.
+
+# Note: We don't use `set -e` (errexit) globally because we want to handle
+# errors gracefully with custom messages (e.g., in `run_with_spinner`).
 
 # ==============================================================================
 # Constants & Configuration
 # ==============================================================================
+# Uppercase variables are conventionally used for global constants.
+
+# Git Repositories
 REPO_URL_P10K="https://github.com/romkatv/powerlevel10k.git"
 REPO_URL_AUTOSUGGEST="https://github.com/zsh-users/zsh-autosuggestions.git"
 REPO_URL_SYNTAX="https://github.com/zsh-users/zsh-syntax-highlighting.git"
@@ -16,8 +41,12 @@ REPO_URL_COMPLETIONS="https://github.com/zsh-users/zsh-completions.git"
 REPO_URL_YOUSHOULDUSE="https://github.com/MichaelAquilina/zsh-you-should-use.git"
 OHMYZSH_INSTALL_URL="https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
 
-# Fonts
+# Fonts Configuration
+# We install fonts to the user's local directory: ~/.local/share/fonts
 FONT_DIR="$HOME/.local/share/fonts"
+
+# Associate Array (Dictionary) for Fonts
+# Syntax: declare -A NAME=( [key]="value" )
 declare -A FONTS=(
   ["MesloLGS NF Regular.ttf"]="https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Regular.ttf"
   ["MesloLGS NF Bold.ttf"]="https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold.ttf"
@@ -25,7 +54,8 @@ declare -A FONTS=(
   ["MesloLGS NF Bold Italic.ttf"]="https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold%20Italic.ttf"
 )
 
-# Colors & Formatting
+# Colors & Formatting using ANSI Escape Codes
+# \033 is the ESC character in octal. [0;31m sets foreground color to red.
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -33,21 +63,25 @@ BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
-NC='\033[0m' # No Color
+NC='\033[0m' # No Color (reset)
 
-# Global Flags
+# Global Flags / State Variables
 SUDO=""
 ROLLBACK_REQUESTED=false
 DRY_RUN=false
+# ${VAR:-default} syntax: use default if VAR is unset or null.
 ZSH_CUSTOM=${ZSH_CUSTOM:-"$HOME/.oh-my-zsh/custom"}
 
 # ==============================================================================
 # Helper Functions
 # ==============================================================================
 
+# Function to clear screen and show ASCII banner
 show_banner() {
     clear
     echo -e "${CYAN}${BOLD}"
+    # Cat with heredoc (<< "EOF") lets us print multi-line strings easily.
+    # Quotes around "EOF" prevent variable expansion within the block.
     cat << "EOF"
     _         _        _____  _____ _   _ 
    / \  _   _| |_ ___ |__  / / ____| | | |
@@ -62,45 +96,54 @@ EOF
     echo ""
 }
 
+# wrappers for echo with colors and icons
 log_info() { echo -e "${BLUE}${BOLD} ℹ️  INFO:${NC} $1"; }
 log_success() { echo -e "${GREEN}${BOLD} ✅ SUCCESS:${NC} $1"; }
 log_warn() { echo -e "${YELLOW}${BOLD} ⚠️  WARN:${NC} $1"; }
+# >&2 redirects output to Stderr (Standard Error), good practice for error messages.
 log_error() { echo -e "${RED}${BOLD} ❌ ERROR:${NC} $1" >&2; }
+
 log_section() { 
     echo ""
     echo -e "${CYAN}${BOLD}==================== [ $1 ] ====================${NC}"
     echo ""
 }
 
+# Simple spinner used for visual feedback during long commands
 spinner() {
     local pid=$1
     local delay=0.1
     local spinstr='|/-\'
+    # Check if process $pid is still running
     while ps -p "$pid" > /dev/null 2>&1; do
+        # Rotate the spinner string
         local temp=${spinstr#?}
         printf " [%c]  " "$spinstr"
         local spinstr=$temp${spinstr%"$temp"}
         sleep $delay
+        # Backspace to overwrite previous character
         printf "\b\b\b\b\b\b"
     done
     printf "    \b\b\b\b"
 }
 
+# Wrapper to run commands with a spinner
 run_with_spinner() {
     local msg="$1"
-    shift
+    shift # Shift arguments so $@ becomes the command
     local cmd="$@"
     
     echo -ne "${BLUE}${BOLD} 🚀 ${msg}...${NC}"
     
-    # Run command in background, suppress output
+    # Run command in background (&), suppress stdout/stderr (> /dev/null 2>&1)
+    # eval is used here to execute the command string properly
     eval "$cmd" > /dev/null 2>&1 &
-    local pid=$!
+    local pid=$! # Get PID of background process
     
-    # Show spinner
+    # Show spinner attached to that PID
     spinner $pid
     
-    # Wait for exit code
+    # Wait for completion and capture exit code
     wait $pid
     local exit_code=$?
     
@@ -108,8 +151,7 @@ run_with_spinner() {
         echo -e "${GREEN}${BOLD} ✅ Done!${NC}"
     else
         echo -e "${RED}${BOLD} ❌ Failed!${NC}"
-        # If crucial, we might want to exit or let the caller handle it.
-        # For now, return the code so caller can decide.
+        # Return the failure code so the caller can handle it
         return $exit_code
     fi
 }
@@ -123,14 +165,17 @@ EOF
 }
 
 # check_dependencies verifies critical tools map nicely.
+# We check for 'curl' and 'git' early because we need them to download everything else.
 check_dependencies() {
   local missing=()
   for cmd in curl git; do
+    # 'command -v' is POSIX compliant and safer than 'which'.
     if ! command -v "$cmd" &>/dev/null; then
       missing+=("$cmd")
     fi
   done
   
+  # ${#arr[@]} gives the length of the array
   if [ ${#missing[@]} -gt 0 ]; then
     log_error "Missing required dependencies: ${missing[*]}"
     log_error "Please install them first (e.g., sudo apt install git curl)."
@@ -138,6 +183,10 @@ check_dependencies() {
   fi
 }
 
+# ensure_clone attempts to clone a git repo idempotently.
+# If the directory exists and is a git repo, it pulls updates.
+# If it exists but isn't a git repo, it warns.
+# If it doesn't exist, it clones.
 ensure_clone() {
   local repo="$1"
   local dest="$2"
@@ -145,10 +194,12 @@ ensure_clone() {
   name=$(basename "$dest")
 
   if [ -d "$dest/.git" ]; then
+    # --ff-only ensures we only fast-forward, preventing merge commits if history diverged
     run_with_spinner "Updating $name" "git -C \"$dest\" pull --ff-only" || log_warn "Failed to update $dest, skipping."
   elif [ -d "$dest" ]; then
     log_warn "Directory $dest exists but is not a git clone. Skipping."
   else
+    # --depth=1 creates a shallow clone, saving bandwidth and disk space
     run_with_spinner "Cloning $name" "git clone --depth=1 \"$repo\" \"$dest\"" || {
       log_error "Failed to clone $repo"
       exit 1
@@ -161,13 +212,13 @@ ensure_clone() {
 # ==============================================================================
 
 prepare_environment() {
-  # Root check
+  # Root check: EUID 0 is root.
   if [ "$EUID" -eq 0 ]; then
     log_error "Please run as a normal user, not root."
     exit 1
   fi
 
-  # Sudo check
+  # Sudo check: We need sudo to install packages via apt.
   if command -v sudo >/dev/null 2>&1; then
     SUDO="sudo"
   else
@@ -176,6 +227,7 @@ prepare_environment() {
   fi
 
   # Pkg manager check (Currently apt-only as per original script)
+  # >/dev/null 2>&1 discards both stdout and stderr
   if ! command -v apt >/dev/null 2>&1; then
     log_error "This installer currently supports Debian/Ubuntu systems with apt only."
     exit 1
@@ -185,10 +237,13 @@ prepare_environment() {
 install_packages() {
   log_section "System Packages"
   
+  # Update package lists
   if ! $SUDO apt update -y >/dev/null 2>&1; then
      log_warn "apt update failed, trying to proceed anyway..."
   fi
   
+  # Install core dependencies
+  # - fonts-firacode: a good fallback font
   run_with_spinner "Installing zsh, git, curl, wget, fonts-firacode" "$SUDO apt install -y zsh git curl wget fonts-firacode" || {
     log_error "Package installation failed."
     exit 1
@@ -202,7 +257,8 @@ install_omz() {
     return
   fi
 
-  # Prevent OMZ from starting zsh immediately
+  # RUNZSH=no: Prevent OMZ from automatically starting zsh after install.
+  # CHSH=no: Prevent OMZ from changing the default shell immediately (we do it later).
   run_with_spinner "Installing Oh My Zsh" "RUNZSH=no CHSH=no curl -fsSL \"$OHMYZSH_INSTALL_URL\" | bash" || {
     log_error "Oh My Zsh installation failed."
     exit 1
@@ -211,6 +267,7 @@ install_omz() {
 
 install_p10k() {
   log_section "Powerlevel10k"
+  # Clone the theme into standard custom theme directory
   ensure_clone "$REPO_URL_P10K" "$ZSH_CUSTOM/themes/powerlevel10k"
 }
 
@@ -218,14 +275,17 @@ install_fonts() {
   log_section "Nerd Fonts"
   mkdir -p "$FONT_DIR"
 
+  # Iterate over associative array keys
   for font in "${!FONTS[@]}"; do
     if [ -f "$FONT_DIR/$font" ]; then
       log_info "$font exists, skipping."
     else
+      # Download font file
       run_with_spinner "Downloading $font" "curl -fsSL -o \"$FONT_DIR/$font\" \"${FONTS[$font]}\"" || log_warn "Failed to download $font"
     fi
   done
 
+  # Refresh font cache so system sees new fonts
   if command -v fc-cache >/dev/null 2>&1; then
     run_with_spinner "Refreshing font cache" "fc-cache -f \"$FONT_DIR\""
   else
@@ -236,22 +296,23 @@ install_fonts() {
 install_cool_tools() {
   log_section "Cool Tools"
 
-  # 1. fzf
+  # 1. fzf: Fuzzy Finder
   if ! command -v fzf >/dev/null 2>&1; then
     run_with_spinner "Installing fzf" "$SUDO apt install -y fzf" || log_warn "Failed to install fzf"
   else
     log_info "fzf already installed."
   fi
 
-  # 2. zoxide
+  # 2. zoxide: A smarter cd command
   if ! command -v zoxide >/dev/null 2>&1; then
     run_with_spinner "Installing zoxide" "curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash" || log_warn "Failed to install zoxide"
   else
     log_info "zoxide already installed."
   fi
 
-  # 3. eza
+  # 3. eza: A modern replacement for ls
   if ! command -v eza >/dev/null 2>&1; then
+    # eza requires a custom gpg key and repository source since it's not in standard older apt repos
     setup_eza_repo() {
         if ! command -v gpg >/dev/null 2>&1; then $SUDO apt install -y gpg; fi
         $SUDO mkdir -p /etc/apt/keyrings
@@ -268,8 +329,8 @@ install_cool_tools() {
   fi
 }
 
-
 install_bat() {
+  # bat might be installed as 'batcat' on Debian/Ubuntu to avoid conflict with another package
   if ! command -v bat >/dev/null 2>&1 && ! command -v batcat >/dev/null 2>&1; then
     run_with_spinner "Installing bat" "$SUDO apt install -y bat" || log_warn "Failed to install bat"
   else
@@ -278,6 +339,7 @@ install_bat() {
 }
 
 install_tldr() {
+  # Tealdeer or standard tldr client
   if ! command -v tldr >/dev/null 2>&1; then
     run_with_spinner "Installing tldr" "$SUDO apt install -y tldr" || log_warn "Failed to install tldr"
   else
@@ -294,51 +356,55 @@ interactive_plugin_selection() {
 
   log_section "Plugin Selection"
   
-  # Ensure we have a tty
+  # Ensure we have a tty (terminal)
+  # -t 1 checks if file descriptor 1 (stdout) is a terminal.
   if [ ! -t 1 ]; then
     log_warn "Non-interactive shell or no TTY detected. Installing default set only."
     return
   fi
 
-  local options=("History Substring Search" "Zsh Completions" "You Should Use" "Bat" "TLDR")
+  local options=("History Substring Search" "Zsh Completions" "You Should Use" "Bat" "TLDR" "Productivity Bundle" "Docker Stack" "Kubernetes Stack" "Python Stack" "Node.js Stack" "Golang Stack")
   local descriptions=(
     "Cycle through history entries that match the command line prefix"
     "Additional completion definitions for Zsh"
     "Reminds you of existing aliases for commands you just typed"
     "A cat clone with syntax highlighting and git integration"
     "Simplified and community-driven man pages"
+    "Includes: sudo, extract, web-search, copypath, copyfile"
+    "Includes: docker, docker-compose"
+    "Includes: kubectl, kubectx, helm"
+    "Includes: python, pip, virtualenv"
+    "Includes: node, npm, nvm, yarn"
+    "Includes: golang"
   )
-  # Internal IDs
-  local ids=("history-substring-search" "zsh-completions" "you-should-use" "bat" "tldr")
+  # Internal IDs to map choices to logic later
+  local ids=("history-substring-search" "zsh-completions" "you-should-use" "bat" "tldr" "productivity-bundle" "docker-stack" "k8s-stack" "python-stack" "node-stack" "golang-stack")
   
-  # Default selection state (false by default)
-  local selected=(false false false false false)
+  # Default selection state (all false/unchecked by default)
+  local selected=(false false false false false false false false false false false)
   local current_idx=0
   
-  # Save cursor position if possible, but clear screen is safer for full menu
-  # We'll use a loop to redraw
-  
-  # Hide cursor
+  # Hide cursor to prevent it attempting to flash during redraws
   echo -ne "\033[?25l"
   
-  # Trap to ensure cursor is restored and stty is reset
+  # Trap to ensure cursor is restored and stty is reset if user hits Ctrl-C
   trap 'stty echo; echo -ne "\033[?25h"; exit 1' INT TERM
   
   while true; do
-      # Move cursor to top left of output area? 
-      # Simpler: Clear screen for the menu (user experience is flashy anyway)
-      # But we want to keep previous logs visible? Hard in simple bash script.
-      # Let's clear screen to focus on menu.
+      # Clear screen to redraw the menu
+      # This provides a "flashy" or app-like feel
       clear
       
       echo -e "${CYAN}${BOLD}   Select Optional Plugins & Tools${NC}"
       echo -e "   Use ${YELLOW}Up/Down${NC} to navigate, ${YELLOW}Space${NC} to toggle, ${YELLOW}Enter${NC} to confirm"
       echo ""
       
+      # Render the menu items
       for i in "${!options[@]}"; do
           local box="[ ]"
           if [ "${selected[$i]}" = true ]; then box="[x]"; fi
           
+          # Highlight the currently selected line
           if [ $i -eq $current_idx ]; then
               echo -e "${GREEN} > $box ${options[$i]}${NC}  - ${descriptions[$i]}"
           else
@@ -346,42 +412,46 @@ interactive_plugin_selection() {
           fi
       done
       
-      # Read input from /dev/tty
-      # Read input from /dev/tty
+      # Read input from /dev/tty specifically to capture keys even if stdin is redirected
       local key=""
-      # Read one character (silent)
-      # IFS= ensures space is not trimmed
+      # read -rsn1:
+      # -r: raw input (don't interpret backslashes)
+      # -s: silent (don't echo characters to screen)
+      # -n1: read exactly one character
+      # IFS= ensures leading whitespace is preserved (important for Space key)
       if ! IFS= read -rsn1 key < /dev/tty; then
-         # If read fails (e.g. timeout or no tty), break to avoid infinite loop
+         # If read fails (e.g. timeout or no tty), break loop
          break
       fi
       
-      # Handle special keys
+      # Handle special keys (Arrow keys send escape sequences)
+      # Escape sequences usually start with \x1b (ESC), followed by [ and a letter.
       if [[ "$key" == $'\x1b' ]]; then
-          # It's an escape sequence, try to read the next 2 characters
-          # use a small timeout to distinguish between ESC key and escape sequence
-          # (though manual ESC press is unlikely to match [A within 0.1s usually)
+          # It's an escape sequence start. Try to read the next 2 characters quickly.
+          # -t 0.1: timeout 0.1s to distinguish manual ESC press from a sequence.
           local seq=""
           if read -rsn2 -t 0.1 seq < /dev/tty; then
-              if [[ "$seq" == "[A" || "$seq" == "OA" ]]; then # Up
+              if [[ "$seq" == "[A" || "$seq" == "OA" ]]; then # Up Arrow
                   key="UP"
-              elif [[ "$seq" == "[B" || "$seq" == "OB" ]]; then # Down
+              elif [[ "$seq" == "[B" || "$seq" == "OB" ]]; then # Down Arrow
                   key="DOWN"
               fi
           fi
       fi
       
-      # Logic based on key
-      if [[ "$key" == "UP" || "$key" == "k" ]]; then
+      # Logic based on key press
+      if [[ "$key" == "UP" || "$key" == "k" ]]; then # Allow 'k' for vim-style navigation
           ((current_idx--))
+          # Wrap around top
           if [ $current_idx -lt 0 ]; then current_idx=$((${#options[@]} - 1)); fi
-      elif [[ "$key" == "DOWN" || "$key" == "j" ]]; then
+      elif [[ "$key" == "DOWN" || "$key" == "j" ]]; then # Allow 'j' for vim-style navigation
           ((current_idx++))
+          # Wrap around bottom
           if [ $current_idx -ge ${#options[@]} ]; then current_idx=0; fi
-      elif [[ "$key" == "" ]]; then # Enter (empty string from read -n1 usually means newline? Wait read -n1 returns emptiness for newline? Yes.)
-          # Actually read -n1 returns empty string for Enter/Newline.
+      elif [[ "$key" == "" ]]; then 
+          # Enter key usually returns an empty string with read -n1
           break
-      elif [[ "$key" == " " ]]; then # Space
+      elif [[ "$key" == " " ]]; then # Space to toggle
           if [ "${selected[$current_idx]}" = true ]; then
              selected[$current_idx]=false
           else
@@ -390,17 +460,16 @@ interactive_plugin_selection() {
       fi
   done
   
-  # Restore cursor
+  # Restore cursor visibility
   echo -ne "\033[?25h"
   
-  # Populate SELECTED_CHOICES
+  # Populate global SELECTED_CHOICES array based on final state
   for i in "${!selected[@]}"; do
       if [ "${selected[$i]}" = true ]; then
           SELECTED_CHOICES+=("${ids[$i]}")
       fi
   done
   
-  # Clear screen one last time or just print summary
   echo ""
   log_info "Selected: ${SELECTED_CHOICES[*]}"
   sleep 1
@@ -431,9 +500,10 @@ configure_zshrc() {
   log_section "Configuration"
   local zshrc="$HOME/.zshrc"
   
-  # Backup
+  # Create a timestamped backup before modifying anything
   if [ -f "$zshrc" ]; then
     local backup_path="$HOME/.zshrc.autozsh.$(date +%Y%m%d%H%M%S).bak"
+    # cp preserves the original file content
     cp "$zshrc" "$backup_path"
     log_info "Backed up .zshrc to $backup_path"
   fi
@@ -441,30 +511,42 @@ configure_zshrc() {
   # Apply Theme
   log_info "Configuring .zshrc settings..."
   if grep -q '^ZSH_THEME=' "$zshrc"; then
-    # Replace the whole line line, preserving quotes if possible, or forcing our own.
+    # sed -i: edit file in-place
+    # search for line starting with ZSH_THEME= and replace it entirely
     sed -i 's/^ZSH_THEME=.*/ZSH_THEME="powerlevel10k\/powerlevel10k"/' "$zshrc"
   else
+    # Append if not found
     echo 'ZSH_THEME="powerlevel10k/powerlevel10k"' >> "$zshrc"
   fi
 
-  # Enable Corrections
-  # If explicitly disabled/commented, enable it.
+  # Enable Corrections (common OMZ feature)
+  # Uncomment the line if it's commented out
   sed -i 's/^# *ENABLE_CORRECTION="true"/ENABLE_CORRECTION="true"/' "$zshrc" 
-  # If not present at all, you might append, but OMZ usually has it commented.
   
   # Configure Plugins
-  # We want: plugins=(git zsh-autosuggestions zsh-syntax-highlighting fzf ...)
-  # For robustness, let's just ensure our required ones are added.
+  # Standard plugins we always want
   local required_plugins="zsh-autosuggestions zsh-syntax-highlighting fzf"
 
-  # Add optional plugins
+  # Append optional plugins based on selection
   if [[ " ${SELECTED_CHOICES[*]} " =~ " history-substring-search " ]]; then required_plugins+=" zsh-history-substring-search"; fi
   if [[ " ${SELECTED_CHOICES[*]} " =~ " zsh-completions " ]]; then required_plugins+=" zsh-completions"; fi
   if [[ " ${SELECTED_CHOICES[*]} " =~ " you-should-use " ]]; then required_plugins+=" you-should-use"; fi
 
+  # Productivity Bundle
+  if [[ " ${SELECTED_CHOICES[*]} " =~ " productivity-bundle " ]]; then required_plugins+=" sudo extract web-search copypath copyfile command-not-found"; fi
+
+  # Dev Stacks
+  if [[ " ${SELECTED_CHOICES[*]} " =~ " docker-stack " ]]; then required_plugins+=" docker docker-compose"; fi
+  if [[ " ${SELECTED_CHOICES[*]} " =~ " k8s-stack " ]]; then required_plugins+=" kubectl kubectx helm"; fi
+  if [[ " ${SELECTED_CHOICES[*]} " =~ " python-stack " ]]; then required_plugins+=" python pip virtualenv"; fi
+  if [[ " ${SELECTED_CHOICES[*]} " =~ " node-stack " ]]; then required_plugins+=" node npm nvm yarn"; fi
+  if [[ " ${SELECTED_CHOICES[*]} " =~ " golang-stack " ]]; then required_plugins+=" golang"; fi
+
+  # Iterate through plugins and ensure they are in the plugins=(...) list
   for plugin in $required_plugins; do
     if ! grep -q "$plugin" "$zshrc"; then
         if grep -q "^plugins=(" "$zshrc"; then
+            # Inject plugin name into the list using sed
             sed -i "s/^plugins=(/plugins=($plugin /" "$zshrc"
         else
             echo "plugins=($plugin)" >> "$zshrc"
@@ -476,14 +558,14 @@ configure_zshrc() {
   if ! grep -q "zoxide init zsh" "$zshrc"; then
     echo >> "$zshrc"
     echo '# zoxide (smart cd)' >> "$zshrc"
-    # Ensure ~/.local/bin is in PATH for zoxide
+    # Ensure ~/.local/bin is in PATH for zoxide binaries
     if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
         echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$zshrc"
     fi
     echo 'eval "$(zoxide init zsh)"' >> "$zshrc"
   fi
 
-  # Eza Aliases
+  # Eza Aliases (Modern ls)
   if ! grep -q "alias ls='eza" "$zshrc"; then
       echo >> "$zshrc"
       echo '# eza (modern ls)' >> "$zshrc"
@@ -491,7 +573,7 @@ configure_zshrc() {
       echo "alias ll='eza --icons -l'" >> "$zshrc"
   fi
   
-  # Bat alias (batcat -> bat)
+  # Bat alias (batcat -> bat) for convenience
   if command -v batcat >/dev/null 2>&1; then
       if ! grep -q "alias bat='batcat'" "$zshrc"; then
           echo >> "$zshrc"
@@ -503,8 +585,10 @@ configure_zshrc() {
 }
 
 set_default_shell() {
+  # basename allows us to check 'zsh' vs '/bin/zsh'
   if [ "$(basename "$SHELL")" != "zsh" ]; then
     log_info "Changing default shell to zsh..."
+    # chsh -s: change shell
     chsh -s "$(which zsh)" || log_warn "Failed to change shell. You may need to do 'chsh -s $(which zsh)' manually."
   fi
 }
@@ -514,8 +598,10 @@ rollback() {
   local zsh_custom="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
   
   # Restore backup
+  # Find the most recent backup file
   local latest_backup
   latest_backup=$(ls -t "$HOME"/.zshrc.autozsh.*.bak 2>/dev/null | head -n 1)
+  
   if [ -n "$latest_backup" ]; then
     log_info "Restoring backup from $latest_backup..."
     cp "$latest_backup" "$HOME/.zshrc"
@@ -542,7 +628,7 @@ rollback() {
 
   # Remove Installed Fonts
   log_info "Removing MesloLGS NF fonts..."
-  # Be specific to avoid removing other user fonts
+  # Be specific to avoid removing other user fonts that match strict patterns
   if ls "$FONT_DIR"/MesloLGS\ NF*.ttf >/dev/null 2>&1; then
       rm -f "$FONT_DIR"/MesloLGS\ NF*.ttf
       if command -v fc-cache >/dev/null 2>&1; then
@@ -579,6 +665,7 @@ show_completion_msg() {
   echo
   log_success "Installation Complete!"
   echo "------------------------------------------------------------------"
+  # WSL check: /proc/version contains kernel info
   if grep -qEi "(Microsoft|WSL)" /proc/version &>/dev/null; then
     echo -e "${YELLOW}WSL DETECTED:${NC}"
     echo "1. Install MesloLGS NF fonts on Windows manually."
@@ -601,12 +688,12 @@ show_completion_msg() {
 check_status() {
   log_info "Checking component status..."
   
-  # Packages
+  # Packages: Simple boolean check if command exists
   if command -v zsh >/dev/null; then log_success "zsh: Installed"; else log_warn "zsh: Missing"; fi
   if command -v git >/dev/null; then log_success "git: Installed"; else log_warn "git: Missing"; fi
   if command -v curl >/dev/null; then log_success "curl: Installed"; else log_warn "curl: Missing"; fi
   
-  # OMZ
+  # OMZ: Check for directory presence
   if [ -d "$HOME/.oh-my-zsh" ]; then log_success "Oh My Zsh: Installed"; else log_warn "Oh My Zsh: Missing"; fi
   
   # P10k
@@ -626,6 +713,9 @@ check_status() {
 # Main Execution
 # ==============================================================================
 
+# getopts: Parse command line flags/references
+# :rhd means flags -r, -h, -d are accepted.
+# The leading colon : allows us to handle invalid options manually in \?)
 while getopts ":rhd" opt; do
   case "$opt" in
     r) ROLLBACK_REQUESTED=true ;;
@@ -650,17 +740,15 @@ if [ "$DRY_RUN" = true ]; then
   exit 0
 fi
 
-# Existing Install Check
+# Existing Install Check (Idempotency)
+# If we detect OMZ, we should ask before potentially blowing it away or layering on top.
 if [ -d "$HOME/.oh-my-zsh" ]; then
     echo -e "${YELLOW}AutoZSH seems to be installed (found ~/.oh-my-zsh).${NC}"
     read -rp "Do you want to uninstall/reset current setup? [y/N] " response
+    # Regex match for y/Y
     if [[ "$response" =~ ^[yY]$ ]]; then
         rollback
-        # After rollback, we can exit or continue. Usually rollback means "remove it".
-        # If user wants to reinstall, they can run the script again.
-        # But wait, if they say 'reset', maybe they want to reinstall immediately?
-        # The request said "trigger uninstall confirmation".
-        # Let's ask if they want to proceed with fresh install.
+        # Check if user wants to reinstall immediately after rollback
         read -rp "Uninstall complete. Proceed with fresh installation? [y/N] " reinstall_response
         if [[ ! "$reinstall_response" =~ ^[yY]$ ]]; then
             exit 0
@@ -671,8 +759,7 @@ if [ -d "$HOME/.oh-my-zsh" ]; then
     fi
 fi
 
-
-
+# Main Flow
 show_banner
 log_info "Starting AutoZSH Installation..."
 
