@@ -37,32 +37,61 @@ This prints environment info and exits without installing anything.
 
 ---
 
-## What the script installs
-- `zsh`
-- [Oh My Zsh](https://ohmyz.sh) (removes any existing `.oh-my-zsh` before install)
-- [Powerlevel10k](https://github.com/romkatv/powerlevel10k) theme
-- [MesloLGS NF Fonts](https://github.com/romkatv/powerlevel10k?tab=readme-ov-file#manual-font-installation) (Recommended for P10k)
-- **Cool Tools**:
-  - [fzf](https://github.com/junegunn/fzf) (Fuzzy Finder)
-  - [zoxide](https://github.com/ajeetdsouza/zoxide) (Smarter cd)
-  - [eza](https://github.com/eza-community/eza) (Modern ls)
-- Plugins:
-  - [zsh-autosuggestions](https://github.com/zsh-users/zsh-autosuggestions)
-  - [zsh-syntax-highlighting](https://github.com/zsh-users/zsh-syntax-highlighting)
-  
+## Included Plugins & Tools
+
+The installer now features an **Interactive Plugin Selection** menu, allowing you to customize your installation by choosing which optional plugins and tools you want.
+
+### Core Components (Always Installed)
+| Tool | Purpose | Benefits |
+|------|---------|----------|
+| **Zsh** | Shell | A powerful shell that operates as both an interactive shell and a scripting language interpreter. |
+| **Oh My Zsh** | Framework | Manages your Zsh configuration, themes, and plugins seamlessly. |
+| **Powerlevel10k** | Theme | A fast, flexible, and cool-looking theme for Zsh that provides instant context. |
+| **MesloLGS NF** | Font | The recommended font for Powerlevel10k to display all icons and glyphs correctly. |
+| **fzf** | Fuzzy Finder | Allows you to search your history, files, and directories with fuzzy matching. |
+| **zoxide** | Smart Directory Jumper | Learns your habits and allows you to jump to frequently used directories with `z <partial_name>`. |
+| **eza** | Modern `ls` | A substitute for `ls` that features color-coding, icons, and git integration. |
+| **zsh-autosuggestions** | Autosuggestions | Suggests commands as you type based on your history. |
+| **zsh-syntax-highlighting** | Syntax Highlighting | Highlighting of commands while they are typed at a zsh prompt. |
+
+### Optional Selection (Interactive Menu)
+| Tool/Plugin | Category | Purpose |
+|-------------|----------|---------|
+| **History Substring Search** | Plugin | Cycle through history entries that match the command line prefix. |
+| **Zsh Completions** | Plugin | Additional completion definitions for Zsh. |
+| **You Should Use** | Plugin | Reminds you of existing aliases for commands you just typed. |
+| **bat** | CLI Tool | A `cat` clone with syntax highlighting and git integration. |
+| **tldr** | CLI Tool | Simplified and community-driven man pages. |
+
 ### Visual Enhancements 
 - **Animated Spinners**: Progress indicators for long-running tasks.
 - **Enhanced Logging**: Clear, color-coded messages with emojis (🚀 ℹ️ ✅ ⚠️ ❌).
 - **ASCII Art Banner**: A stylish welcome screen.
+- **Interactive Menu**: Custom bash-based menu for selecting optional plugins.
 
 It also reconfigures `~/.zshrc` to enable:
 - `ZSH_THEME="powerlevel10k/powerlevel10k"` (uses robust `sed` logic to set theme)
 - `ENABLE_CORRECTION="true"`
-- `plugins=(git zsh-autosuggestions zsh-syntax-highlighting fzf)`
+- `plugins=(git zsh-autosuggestions zsh-syntax-highlighting fzf ...)`
 - `alias ls='eza --icons'` and `alias ll='eza --icons -l'`
 - `zoxide init zsh`
 
 During configuration, the installer first creates a timestamped backup of your existing `~/.zshrc` (e.g. `~/.zshrc.autozsh.20240414121530.bak`) so you can revert if needed.
+
+---
+
+## Uninstall / Rollback
+
+If you need to revert the changes, you can use the rollback feature:
+
+```bash
+bash zsh_autoinstall.sh -r
+```
+
+This will:
+1. Restore your previous `.zshrc` from the backup.
+2. Remove standard plugins and themes installed by this script.
+3. **[New]** Optionally prompt you to completely remove the Oh My Zsh directory (`~/.oh-my-zsh`) for a full cleanup.
 
 ---
 
@@ -86,3 +115,4 @@ These steps are interactive and must be completed manually inside zsh.
 ## Roadmap ideas
 - Auto-detect distro/package manager (`dnf`, `pacman`, `brew`, etc.)
 - Offer optional prompt/profile presets (prebuilt `.p10k.zsh`, extra plugin sets)
+

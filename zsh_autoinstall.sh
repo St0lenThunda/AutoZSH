@@ -11,6 +11,9 @@ set -o pipefail
 REPO_URL_P10K="https://github.com/romkatv/powerlevel10k.git"
 REPO_URL_AUTOSUGGEST="https://github.com/zsh-users/zsh-autosuggestions.git"
 REPO_URL_SYNTAX="https://github.com/zsh-users/zsh-syntax-highlighting.git"
+REPO_URL_HISTORY="https://github.com/zsh-users/zsh-history-substring-search.git"
+REPO_URL_COMPLETIONS="https://github.com/zsh-users/zsh-completions.git"
+REPO_URL_YOUSHOULDUSE="https://github.com/MichaelAquilina/zsh-you-should-use.git"
 OHMYZSH_INSTALL_URL="https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
 
 # Fonts
@@ -266,10 +269,162 @@ install_cool_tools() {
 }
 
 
+install_bat() {
+  if ! command -v bat >/dev/null 2>&1 && ! command -v batcat >/dev/null 2>&1; then
+    run_with_spinner "Installing bat" "$SUDO apt install -y bat" || log_warn "Failed to install bat"
+  else
+    log_info "bat already installed."
+  fi
+}
+
+install_tldr() {
+  if ! command -v tldr >/dev/null 2>&1; then
+    run_with_spinner "Installing tldr" "$SUDO apt install -y tldr" || log_warn "Failed to install tldr"
+  else
+    log_info "tldr already installed."
+  fi
+}
+
+# Global array to hold selections
+SELECTED_CHOICES=()
+
+interactive_plugin_selection() {
+  # Skip if dry run
+  if [ "$DRY_RUN" = true ]; then return; fi
+
+  log_section "Plugin Selection"
+  
+  # Ensure we have a tty
+  if [ ! -t 1 ]; then
+    log_warn "Non-interactive shell or no TTY detected. Installing default set only."
+    return
+  fi
+
+  local options=("History Substring Search" "Zsh Completions" "You Should Use" "Bat" "TLDR")
+  local descriptions=(
+    "Cycle through history entries that match the command line prefix"
+    "Additional completion definitions for Zsh"
+    "Reminds you of existing aliases for commands you just typed"
+    "A cat clone with syntax highlighting and git integration"
+    "Simplified and community-driven man pages"
+  )
+  # Internal IDs
+  local ids=("history-substring-search" "zsh-completions" "you-should-use" "bat" "tldr")
+  
+  # Default selection state (false by default)
+  local selected=(false false false false false)
+  local current_idx=0
+  
+  # Save cursor position if possible, but clear screen is safer for full menu
+  # We'll use a loop to redraw
+  
+  # Hide cursor
+  echo -ne "\033[?25l"
+  
+  # Trap to ensure cursor is restored and stty is reset
+  trap 'stty echo; echo -ne "\033[?25h"; exit 1' INT TERM
+  
+  while true; do
+      # Move cursor to top left of output area? 
+      # Simpler: Clear screen for the menu (user experience is flashy anyway)
+      # But we want to keep previous logs visible? Hard in simple bash script.
+      # Let's clear screen to focus on menu.
+      clear
+      
+      echo -e "${CYAN}${BOLD}   Select Optional Plugins & Tools${NC}"
+      echo -e "   Use ${YELLOW}Up/Down${NC} to navigate, ${YELLOW}Space${NC} to toggle, ${YELLOW}Enter${NC} to confirm"
+      echo ""
+      
+      for i in "${!options[@]}"; do
+          local box="[ ]"
+          if [ "${selected[$i]}" = true ]; then box="[x]"; fi
+          
+          if [ $i -eq $current_idx ]; then
+              echo -e "${GREEN} > $box ${options[$i]}${NC}  - ${descriptions[$i]}"
+          else
+              echo -e "   $box ${options[$i]}     - ${descriptions[$i]}"
+          fi
+      done
+      
+      # Read input from /dev/tty
+      # Read input from /dev/tty
+      local key=""
+      # Read one character (silent)
+      # IFS= ensures space is not trimmed
+      if ! IFS= read -rsn1 key < /dev/tty; then
+         # If read fails (e.g. timeout or no tty), break to avoid infinite loop
+         break
+      fi
+      
+      # Handle special keys
+      if [[ "$key" == $'\x1b' ]]; then
+          # It's an escape sequence, try to read the next 2 characters
+          # use a small timeout to distinguish between ESC key and escape sequence
+          # (though manual ESC press is unlikely to match [A within 0.1s usually)
+          local seq=""
+          if read -rsn2 -t 0.1 seq < /dev/tty; then
+              if [[ "$seq" == "[A" || "$seq" == "OA" ]]; then # Up
+                  key="UP"
+              elif [[ "$seq" == "[B" || "$seq" == "OB" ]]; then # Down
+                  key="DOWN"
+              fi
+          fi
+      fi
+      
+      # Logic based on key
+      if [[ "$key" == "UP" || "$key" == "k" ]]; then
+          ((current_idx--))
+          if [ $current_idx -lt 0 ]; then current_idx=$((${#options[@]} - 1)); fi
+      elif [[ "$key" == "DOWN" || "$key" == "j" ]]; then
+          ((current_idx++))
+          if [ $current_idx -ge ${#options[@]} ]; then current_idx=0; fi
+      elif [[ "$key" == "" ]]; then # Enter (empty string from read -n1 usually means newline? Wait read -n1 returns emptiness for newline? Yes.)
+          # Actually read -n1 returns empty string for Enter/Newline.
+          break
+      elif [[ "$key" == " " ]]; then # Space
+          if [ "${selected[$current_idx]}" = true ]; then
+             selected[$current_idx]=false
+          else
+             selected[$current_idx]=true
+          fi
+      fi
+  done
+  
+  # Restore cursor
+  echo -ne "\033[?25h"
+  
+  # Populate SELECTED_CHOICES
+  for i in "${!selected[@]}"; do
+      if [ "${selected[$i]}" = true ]; then
+          SELECTED_CHOICES+=("${ids[$i]}")
+      fi
+  done
+  
+  # Clear screen one last time or just print summary
+  echo ""
+  log_info "Selected: ${SELECTED_CHOICES[*]}"
+  sleep 1
+}
+
 install_plugins() {
   log_section "ZSH Plugins"
   ensure_clone "$REPO_URL_AUTOSUGGEST" "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
   ensure_clone "$REPO_URL_SYNTAX" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+  
+  # Optional Plugins
+  if [[ " ${SELECTED_CHOICES[*]} " =~ " history-substring-search " ]]; then
+      ensure_clone "$REPO_URL_HISTORY" "$ZSH_CUSTOM/plugins/zsh-history-substring-search"
+  fi
+  if [[ " ${SELECTED_CHOICES[*]} " =~ " zsh-completions " ]]; then
+      ensure_clone "$REPO_URL_COMPLETIONS" "$ZSH_CUSTOM/plugins/zsh-completions"
+  fi
+  if [[ " ${SELECTED_CHOICES[*]} " =~ " you-should-use " ]]; then
+      ensure_clone "$REPO_URL_YOUSHOULDUSE" "$ZSH_CUSTOM/plugins/you-should-use"
+  fi
+  
+  # Optional Tools
+  if [[ " ${SELECTED_CHOICES[*]} " =~ " bat " ]]; then install_bat; fi
+  if [[ " ${SELECTED_CHOICES[*]} " =~ " tldr " ]]; then install_tldr; fi
 }
 
 configure_zshrc() {
@@ -301,6 +456,12 @@ configure_zshrc() {
   # We want: plugins=(git zsh-autosuggestions zsh-syntax-highlighting fzf ...)
   # For robustness, let's just ensure our required ones are added.
   local required_plugins="zsh-autosuggestions zsh-syntax-highlighting fzf"
+
+  # Add optional plugins
+  if [[ " ${SELECTED_CHOICES[*]} " =~ " history-substring-search " ]]; then required_plugins+=" zsh-history-substring-search"; fi
+  if [[ " ${SELECTED_CHOICES[*]} " =~ " zsh-completions " ]]; then required_plugins+=" zsh-completions"; fi
+  if [[ " ${SELECTED_CHOICES[*]} " =~ " you-should-use " ]]; then required_plugins+=" you-should-use"; fi
+
   for plugin in $required_plugins; do
     if ! grep -q "$plugin" "$zshrc"; then
         if grep -q "^plugins=(" "$zshrc"; then
@@ -328,6 +489,14 @@ configure_zshrc() {
       echo '# eza (modern ls)' >> "$zshrc"
       echo "alias ls='eza --icons'" >> "$zshrc"
       echo "alias ll='eza --icons -l'" >> "$zshrc"
+  fi
+  
+  # Bat alias (batcat -> bat)
+  if command -v batcat >/dev/null 2>&1; then
+      if ! grep -q "alias bat='batcat'" "$zshrc"; then
+          echo >> "$zshrc"
+          echo "alias bat='batcat'" >> "$zshrc"
+      fi
   fi
   
   log_success "Configuration updated."
@@ -365,8 +534,17 @@ rollback() {
   log_info "Removing zsh-syntax-highlighting..."
   rm -rf "$zsh_custom/plugins/zsh-syntax-highlighting"
 
-  # Optional: remove OMZ entirely? The original script seemed to optionally do this.
-  # We will leave OMZ base if it was there before, or user can manually purge.
+  # Optional: remove OMZ entirely
+  if [ -d "$HOME/.oh-my-zsh" ]; then
+      read -rp "Do you also want to remove Oh My Zsh completely? [y/N] " remove_omz
+      if [[ "$remove_omz" =~ ^[yY]$ ]]; then
+          log_info "Removing Oh My Zsh..."
+          rm -rf "$HOME/.oh-my-zsh"
+          log_success "Oh My Zsh removed."
+      else
+          log_info "Keeping Oh My Zsh installation."
+      fi
+  fi
   
   log_success "Rollback complete."
 }
@@ -474,6 +652,7 @@ log_info "Starting AutoZSH Installation..."
 
 check_dependencies
 prepare_environment
+interactive_plugin_selection
 install_packages
 install_omz
 install_p10k
