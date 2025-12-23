@@ -534,6 +534,32 @@ rollback() {
   log_info "Removing zsh-syntax-highlighting..."
   rm -rf "$zsh_custom/plugins/zsh-syntax-highlighting"
 
+  # Remove Optional Plugins
+  log_info "Removing optional plugins..."
+  rm -rf "$zsh_custom/plugins/zsh-history-substring-search"
+  rm -rf "$zsh_custom/plugins/zsh-completions"
+  rm -rf "$zsh_custom/plugins/you-should-use"
+
+  # Remove Installed Fonts
+  log_info "Removing MesloLGS NF fonts..."
+  # Be specific to avoid removing other user fonts
+  if ls "$FONT_DIR"/MesloLGS\ NF*.ttf >/dev/null 2>&1; then
+      rm -f "$FONT_DIR"/MesloLGS\ NF*.ttf
+      if command -v fc-cache >/dev/null 2>&1; then
+          log_info "Updating font cache..."
+          fc-cache -f "$FONT_DIR"
+      fi
+  else
+      log_info "No matching fonts found to remove."
+  fi
+  
+  # Remove Local Tools
+  # zoxide is installed to ~/.local/bin by its install script usually, or we added it there.
+  if [ -f "$HOME/.local/bin/zoxide" ]; then
+      log_info "Removing zoxide binary..."
+      rm -f "$HOME/.local/bin/zoxide"
+  fi
+
   # Optional: remove OMZ entirely
   if [ -d "$HOME/.oh-my-zsh" ]; then
       read -rp "Do you also want to remove Oh My Zsh completely? [y/N] " remove_omz
@@ -592,7 +618,7 @@ check_status() {
   
   # Cool Tools
   if command -v fzf >/dev/null; then log_success "fzf: Installed"; else log_warn "fzf: Missing"; fi
-  if command -v zoxide >/dev/null; then log_success "zoxide: Installed"; else log_warn "zoxide: Missing"; fi
+  if command -v zoxide >/dev/null || [ -x "$HOME/.local/bin/zoxide" ]; then log_success "zoxide: Installed"; else log_warn "zoxide: Missing"; fi
   if command -v eza >/dev/null; then log_success "eza: Installed"; else log_warn "eza: Missing"; fi
 }
 
