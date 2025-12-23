@@ -1,7 +1,10 @@
-## AutoZSH v1.1.0 - The "Flashy" Update
+## AutoZSH v1.1.0 - The "Flashy" Educational Installer
 
 Opinionated one-shot installer for my preferred zsh environment.
 I find myself setting up zsh on new machines over and over, so I made this script to save time.
+
+> [!NOTE]
+> **Educational Tool**: This script is heavily commented to serve as a reference for Bash scripting best practices, including strict mode usage (`set -u`, `pipefail`), modular functions, ANSI colors, and interactive menus.
 
 ---
 
@@ -62,6 +65,22 @@ The installer now features an **Interactive Plugin Selection** menu, allowing yo
 | **You Should Use** | Plugin | Reminds you of existing aliases for commands you just typed. |
 | **bat** | CLI Tool | A `cat` clone with syntax highlighting and git integration. |
 | **tldr** | CLI Tool | Simplified and community-driven man pages. |
+
+### Productivity Bundle
+Select "Productivity Bundle" to enable these common time-savers:
+- **sudo**: Double tap ESC to add sudo.
+- **extract**: Unzip/tar/rar anything with one command.
+- **web-search**: Search Google/StackOverflow from CLI.
+- **copypath/copyfile**: Copy paths or content to clipboard.
+- **command-not-found**: Suggests packages for missing commands.
+
+### Developer Stacks
+Pre-configured plugin bundles for your tech stack:
+- **Docker**: `docker`, `docker-compose`
+- **Kubernetes**: `kubectl`, `kubectx`, `helm`
+- **Python**: `python`, `pip`, `virtualenv`
+- **Node.js**: `node`, `npm`, `nvm`, `yarn`
+- **Golang**: `golang`
 
 ### Visual Enhancements 
 - **Animated Spinners**: Progress indicators for long-running tasks.
