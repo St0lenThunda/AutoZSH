@@ -1,6 +1,7 @@
-## AutoZSH 0.0.1 (beta)
+## AutoZSH v1.1.0 - The "Flashy" Update
 
 Opinionated one-shot installer for my preferred zsh environment.
+I find myself setting up zsh on new machines over and over, so I made this script to save time.
 
 ---
 
@@ -40,15 +41,26 @@ This prints environment info and exits without installing anything.
 - `zsh`
 - [Oh My Zsh](https://ohmyz.sh) (removes any existing `.oh-my-zsh` before install)
 - [Powerlevel10k](https://github.com/romkatv/powerlevel10k) theme
-- [Fira Code Nerd Font](https://github.com/tonsky/FiraCode)
+- [MesloLGS NF Fonts](https://github.com/romkatv/powerlevel10k?tab=readme-ov-file#manual-font-installation) (Recommended for P10k)
+- **Cool Tools**:
+  - [fzf](https://github.com/junegunn/fzf) (Fuzzy Finder)
+  - [zoxide](https://github.com/ajeetdsouza/zoxide) (Smarter cd)
+  - [eza](https://github.com/eza-community/eza) (Modern ls)
 - Plugins:
   - [zsh-autosuggestions](https://github.com/zsh-users/zsh-autosuggestions)
   - [zsh-syntax-highlighting](https://github.com/zsh-users/zsh-syntax-highlighting)
+  
+### Visual Enhancements 
+- **Animated Spinners**: Progress indicators for long-running tasks.
+- **Enhanced Logging**: Clear, color-coded messages with emojis (🚀 ℹ️ ✅ ⚠️ ❌).
+- **ASCII Art Banner**: A stylish welcome screen.
 
 It also reconfigures `~/.zshrc` to enable:
 - `ZSH_THEME="powerlevel10k/powerlevel10k"` (uses robust `sed` logic to set theme)
 - `ENABLE_CORRECTION="true"`
-- `plugins=(git zsh-autosuggestions zsh-syntax-highlighting)` (merges with existing plugins, de-duplicates)
+- `plugins=(git zsh-autosuggestions zsh-syntax-highlighting fzf)`
+- `alias ls='eza --icons'` and `alias ll='eza --icons -l'`
+- `zoxide init zsh`
 
 During configuration, the installer first creates a timestamped backup of your existing `~/.zshrc` (e.g. `~/.zshrc.autozsh.20240414121530.bak`) so you can revert if needed.
 

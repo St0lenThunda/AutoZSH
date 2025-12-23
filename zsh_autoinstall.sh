@@ -1,347 +1,485 @@
 #!/bin/bash
-# Safety first: combine strict unset/pipe handling with explicit exit checks for critical commands.
+# Safety first: strict mode
 set -u
 set -o pipefail
+# We won't use set -e globally because we want to handle some errors manually, 
+# but we will check exit codes for critical steps.
 
-# According to: https://medium.com/@shivam1/make-your-terminal-beautiful-and-fast-with-zsh-shell-and-powerlevel10k-6484461c6efb
-# My ZSH install
-# This script installs and configures ZSH with Oh-My-Zsh and several popular plugins and themes. I liked the idea of a one line installer. 
+# ==============================================================================
+# Constants & Configuration
+# ==============================================================================
+REPO_URL_P10K="https://github.com/romkatv/powerlevel10k.git"
+REPO_URL_AUTOSUGGEST="https://github.com/zsh-users/zsh-autosuggestions.git"
+REPO_URL_SYNTAX="https://github.com/zsh-users/zsh-syntax-highlighting.git"
+OHMYZSH_INSTALL_URL="https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
 
-# Includes: 
-# - nerd fonts
-# - powerline10k theme
-# - auto-suggestion/syntax highlighting plugins
-# - etc
-#
-# Installing from command line:
-# bash -c "$(curl -fsSL https://raw.githubusercontent.com/St0lenThunda/AutoZSH/main/zsh_autoinstall.sh)"
+# Fonts
+FONT_DIR="$HOME/.local/share/fonts"
+declare -A FONTS=(
+  ["MesloLGS NF Regular.ttf"]="https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Regular.ttf"
+  ["MesloLGS NF Bold.ttf"]="https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold.ttf"
+  ["MesloLGS NF Italic.ttf"]="https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Italic.ttf"
+  ["MesloLGS NF Bold Italic.ttf"]="https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold%20Italic.ttf"
+)
 
-# Predeclare variables so `set -u` (treat unset variables as errors) stays happy.
+# Colors & Formatting
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+# Global Flags
 SUDO=""
 ROLLBACK_REQUESTED=false
 DRY_RUN=false
+ZSH_CUSTOM=${ZSH_CUSTOM:-"$HOME/.oh-my-zsh/custom"}
 
-# usage prints the public help text (only documenting the supported user-facing flags).
+# ==============================================================================
+# Helper Functions
+# ==============================================================================
+
+show_banner() {
+    clear
+    echo -e "${CYAN}${BOLD}"
+    cat << "EOF"
+    _         _        _____  _____ _   _ 
+   / \  _   _| |_ ___ |__  / / ____| | | |
+  / _ \| | | | __/ _ \  / / | (___ | |_| |
+ / ___ \ |_| | || (_) |/ /_  \___ \|  _  |
+/_/   \_\__,_|\__\___/____| |_____/|_| |_|
+                                          
+EOF
+    echo -e "${NC}"
+    echo -e "${PURPLE}${BOLD}   >>> The Ultimate ZSH Experience Installer <<<   ${NC}"
+    echo -e "${BLUE}   ===============================================   ${NC}"
+    echo ""
+}
+
+log_info() { echo -e "${BLUE}${BOLD} ℹ️  INFO:${NC} $1"; }
+log_success() { echo -e "${GREEN}${BOLD} ✅ SUCCESS:${NC} $1"; }
+log_warn() { echo -e "${YELLOW}${BOLD} ⚠️  WARN:${NC} $1"; }
+log_error() { echo -e "${RED}${BOLD} ❌ ERROR:${NC} $1" >&2; }
+log_section() { 
+    echo ""
+    echo -e "${CYAN}${BOLD}==================== [ $1 ] ====================${NC}"
+    echo ""
+}
+
+spinner() {
+    local pid=$1
+    local delay=0.1
+    local spinstr='|/-\'
+    while ps -p "$pid" > /dev/null 2>&1; do
+        local temp=${spinstr#?}
+        printf " [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b\b\b\b"
+    done
+    printf "    \b\b\b\b"
+}
+
+run_with_spinner() {
+    local msg="$1"
+    shift
+    local cmd="$@"
+    
+    echo -ne "${BLUE}${BOLD} 🚀 ${msg}...${NC}"
+    
+    # Run command in background, suppress output
+    eval "$cmd" > /dev/null 2>&1 &
+    local pid=$!
+    
+    # Show spinner
+    spinner $pid
+    
+    # Wait for exit code
+    wait $pid
+    local exit_code=$?
+    
+    if [ $exit_code -eq 0 ]; then
+        echo -e "${GREEN}${BOLD} ✅ Done!${NC}"
+    else
+        echo -e "${RED}${BOLD} ❌ Failed!${NC}"
+        # If crucial, we might want to exit or let the caller handle it.
+        # For now, return the code so caller can decide.
+        return $exit_code
+    fi
+}
+
 usage() {
-  cat <<'EOF'
-Usage: zsh_autoinstall.sh [-h]
+  cat <<EOF
+Usage: $(basename "$0") [-h] [-d]
   -h    Show this help message
+  -d    Dry run (check environment only)
 EOF
 }
 
-# Hidden rollback flag (-r) remains available for advanced testing but intentionally undocumented.
-
-# rollback attempts to rewind the actions performed by the installer for quick testing loops.
-rollback() {
-  echo "AutoZSH rollback starting..."
-
-  # Default to Oh My Zsh's custom directory layout unless the caller overrides ZSH_CUSTOM.
-  local zsh_custom_dir="${ZSH_CUSTOM:-"$HOME/.oh-my-zsh/custom"}"
-
-  # Restore the newest timestamped backup if we had previously generated one.
-  if compgen -G "$HOME"/.zshrc.autozsh.*.bak >/dev/null; then
-    # Use ls -t to sort by modification time and pick the latest entry with head -n1.
-    local latest_backup
-    latest_backup=$(ls -t "$HOME"/.zshrc.autozsh.*.bak 2>/dev/null | head -n 1)
-    if [ -n "$latest_backup" ] && cp "$latest_backup" "$HOME/.zshrc"; then
-      echo "Restored ~/.zshrc from backup: $latest_backup"
-    else
-      echo "Failed to restore ~/.zshrc from the AutoZSH backup set." >&2
-      exit 1
+# check_dependencies verifies critical tools map nicely.
+check_dependencies() {
+  local missing=()
+  for cmd in curl git; do
+    if ! command -v "$cmd" &>/dev/null; then
+      missing+=("$cmd")
     fi
-  else
-    echo "No AutoZSH backup found; leaving ~/.zshrc untouched."
-  fi
-
-  # Cautiously remove the theme/plugin directories we manage, validating they live under $HOME first.
-  local managed_paths=(
-    "$zsh_custom_dir/themes/powerlevel10k"
-    "$zsh_custom_dir/plugins/zsh-autosuggestions"
-    "$zsh_custom_dir/plugins/zsh-syntax-highlighting"
-  )
-
-  for managed_path in "${managed_paths[@]}"; do
-    case "$managed_path" in
-      "$HOME"/*)
-        if [ -d "$managed_path" ]; then
-          if rm -rf "$managed_path"; then
-            echo "Removed AutoZSH-managed directory: $managed_path"
-          else
-            echo "Failed to remove $managed_path" >&2
-            exit 1
-          fi
-        else
-          echo "No AutoZSH directory at $managed_path; skipping."
-        fi
-        ;;
-      *)
-        echo "Refusing to touch unexpected path outside \$HOME: $managed_path" >&2
-        ;;
-    esac
   done
-
-  echo "Rollback complete. Remove packages (zsh/fonts) manually with apt if you installed them solely for testing."
+  
+  if [ ${#missing[@]} -gt 0 ]; then
+    log_error "Missing required dependencies: ${missing[*]}"
+    log_error "Please install them first (e.g., sudo apt install git curl)."
+    exit 1
+  fi
 }
 
-# Parse command-line switches before doing any installation work.
-# Note: -r is silently supported for internal testing but omitted from user-facing docs.
+ensure_clone() {
+  local repo="$1"
+  local dest="$2"
+  local name
+  name=$(basename "$dest")
+
+  if [ -d "$dest/.git" ]; then
+    run_with_spinner "Updating $name" "git -C \"$dest\" pull --ff-only" || log_warn "Failed to update $dest, skipping."
+  elif [ -d "$dest" ]; then
+    log_warn "Directory $dest exists but is not a git clone. Skipping."
+  else
+    run_with_spinner "Cloning $name" "git clone --depth=1 \"$repo\" \"$dest\"" || {
+      log_error "Failed to clone $repo"
+      exit 1
+    }
+  fi
+}
+
+# ==============================================================================
+# Core Functions
+# ==============================================================================
+
+prepare_environment() {
+  # Root check
+  if [ "$EUID" -eq 0 ]; then
+    log_error "Please run as a normal user, not root."
+    exit 1
+  fi
+
+  # Sudo check
+  if command -v sudo >/dev/null 2>&1; then
+    SUDO="sudo"
+  else
+    log_error "sudo is required for package installation."
+    exit 1
+  fi
+
+  # Pkg manager check (Currently apt-only as per original script)
+  if ! command -v apt >/dev/null 2>&1; then
+    log_error "This installer currently supports Debian/Ubuntu systems with apt only."
+    exit 1
+  fi
+}
+
+install_packages() {
+  log_section "System Packages"
+  
+  if ! $SUDO apt update -y >/dev/null 2>&1; then
+     log_warn "apt update failed, trying to proceed anyway..."
+  fi
+  
+  run_with_spinner "Installing zsh, git, curl, wget, fonts-firacode" "$SUDO apt install -y zsh git curl wget fonts-firacode" || {
+    log_error "Package installation failed."
+    exit 1
+  }
+}
+
+install_omz() {
+  log_section "Oh My Zsh"
+  if [ -d "$HOME/.oh-my-zsh" ]; then
+    log_info "Oh My Zsh is already installed. Skipping."
+    return
+  fi
+
+  # Prevent OMZ from starting zsh immediately
+  run_with_spinner "Installing Oh My Zsh" "RUNZSH=no CHSH=no curl -fsSL \"$OHMYZSH_INSTALL_URL\" | bash" || {
+    log_error "Oh My Zsh installation failed."
+    exit 1
+  }
+}
+
+install_p10k() {
+  log_section "Powerlevel10k"
+  ensure_clone "$REPO_URL_P10K" "$ZSH_CUSTOM/themes/powerlevel10k"
+}
+
+install_fonts() {
+  log_section "Nerd Fonts"
+  mkdir -p "$FONT_DIR"
+
+  for font in "${!FONTS[@]}"; do
+    if [ -f "$FONT_DIR/$font" ]; then
+      log_info "$font exists, skipping."
+    else
+      run_with_spinner "Downloading $font" "curl -fsSL -o \"$FONT_DIR/$font\" \"${FONTS[$font]}\"" || log_warn "Failed to download $font"
+    fi
+  done
+
+  if command -v fc-cache >/dev/null 2>&1; then
+    run_with_spinner "Refreshing font cache" "fc-cache -f \"$FONT_DIR\""
+  else
+    log_warn "fc-cache not found, skipping cache refresh."
+  fi
+}
+
+install_cool_tools() {
+  log_section "Cool Tools"
+
+  # 1. fzf
+  if ! command -v fzf >/dev/null 2>&1; then
+    run_with_spinner "Installing fzf" "$SUDO apt install -y fzf" || log_warn "Failed to install fzf"
+  else
+    log_info "fzf already installed."
+  fi
+
+  # 2. zoxide
+  if ! command -v zoxide >/dev/null 2>&1; then
+    run_with_spinner "Installing zoxide" "curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash" || log_warn "Failed to install zoxide"
+  else
+    log_info "zoxide already installed."
+  fi
+
+  # 3. eza
+  if ! command -v eza >/dev/null 2>&1; then
+    setup_eza_repo() {
+        if ! command -v gpg >/dev/null 2>&1; then $SUDO apt install -y gpg; fi
+        $SUDO mkdir -p /etc/apt/keyrings
+        wget -qO- https://raw.githubusercontent.com/eza-community/eza/main/deb.asc | $SUDO gpg --dearmor --yes -o /etc/apt/keyrings/gierens.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/gierens.gpg] http://deb.gierens.de stable main" | $SUDO tee /etc/apt/sources.list.d/gierens.list > /dev/null
+        $SUDO chmod 644 /etc/apt/keyrings/gierens.gpg /etc/apt/sources.list.d/gierens.list
+        $SUDO apt update -y
+    }
+    
+    run_with_spinner "Setting up eza repository" setup_eza_repo || log_warn "Failed to setup eza repo"
+    run_with_spinner "Installing eza" "$SUDO apt install -y eza" || log_warn "Failed to install eza"
+  else
+    log_info "eza already installed."
+  fi
+}
+
+
+install_plugins() {
+  log_section "ZSH Plugins"
+  ensure_clone "$REPO_URL_AUTOSUGGEST" "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+  ensure_clone "$REPO_URL_SYNTAX" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+}
+
+configure_zshrc() {
+  log_section "Configuration"
+  local zshrc="$HOME/.zshrc"
+  
+  # Backup
+  if [ -f "$zshrc" ]; then
+    local backup_path="$HOME/.zshrc.autozsh.$(date +%Y%m%d%H%M%S).bak"
+    cp "$zshrc" "$backup_path"
+    log_info "Backed up .zshrc to $backup_path"
+  fi
+
+  # Apply Theme
+  log_info "Configuring .zshrc settings..."
+  if grep -q '^ZSH_THEME=' "$zshrc"; then
+    # Replace the whole line line, preserving quotes if possible, or forcing our own.
+    sed -i 's/^ZSH_THEME=.*/ZSH_THEME="powerlevel10k\/powerlevel10k"/' "$zshrc"
+  else
+    echo 'ZSH_THEME="powerlevel10k/powerlevel10k"' >> "$zshrc"
+  fi
+
+  # Enable Corrections
+  # If explicitly disabled/commented, enable it.
+  sed -i 's/^# *ENABLE_CORRECTION="true"/ENABLE_CORRECTION="true"/' "$zshrc" 
+  # If not present at all, you might append, but OMZ usually has it commented.
+  
+  # Configure Plugins
+  # We want: plugins=(git zsh-autosuggestions zsh-syntax-highlighting fzf ...)
+  # For robustness, let's just ensure our required ones are added.
+  local required_plugins="zsh-autosuggestions zsh-syntax-highlighting fzf"
+  for plugin in $required_plugins; do
+    if ! grep -q "$plugin" "$zshrc"; then
+        if grep -q "^plugins=(" "$zshrc"; then
+            sed -i "s/^plugins=(/plugins=($plugin /" "$zshrc"
+        else
+            echo "plugins=($plugin)" >> "$zshrc"
+        fi
+    fi
+  done
+  
+  # Zoxide Init
+  if ! grep -q "zoxide init zsh" "$zshrc"; then
+    echo >> "$zshrc"
+    echo '# zoxide (smart cd)' >> "$zshrc"
+    # Ensure ~/.local/bin is in PATH for zoxide
+    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$zshrc"
+    fi
+    echo 'eval "$(zoxide init zsh)"' >> "$zshrc"
+  fi
+
+  # Eza Aliases
+  if ! grep -q "alias ls='eza" "$zshrc"; then
+      echo >> "$zshrc"
+      echo '# eza (modern ls)' >> "$zshrc"
+      echo "alias ls='eza --icons'" >> "$zshrc"
+      echo "alias ll='eza --icons -l'" >> "$zshrc"
+  fi
+  
+  log_success "Configuration updated."
+}
+
+set_default_shell() {
+  if [ "$(basename "$SHELL")" != "zsh" ]; then
+    log_info "Changing default shell to zsh..."
+    chsh -s "$(which zsh)" || log_warn "Failed to change shell. You may need to do 'chsh -s $(which zsh)' manually."
+  fi
+}
+
+rollback() {
+  log_info "Rollback requested."
+  local zsh_custom="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
+  
+  # Restore backup
+  local latest_backup
+  latest_backup=$(ls -t "$HOME"/.zshrc.autozsh.*.bak 2>/dev/null | head -n 1)
+  if [ -n "$latest_backup" ]; then
+    log_info "Restoring backup from $latest_backup..."
+    cp "$latest_backup" "$HOME/.zshrc"
+    log_success "Restored .zshrc from $latest_backup"
+  else
+    log_warn "No .zshrc backup found to restore."
+  fi
+
+  # Remove dirs
+  log_info "Removing Powerlevel10k..."
+  rm -rf "$zsh_custom/themes/powerlevel10k"
+
+  log_info "Removing zsh-autosuggestions..."
+  rm -rf "$zsh_custom/plugins/zsh-autosuggestions"
+
+  log_info "Removing zsh-syntax-highlighting..."
+  rm -rf "$zsh_custom/plugins/zsh-syntax-highlighting"
+
+  # Optional: remove OMZ entirely? The original script seemed to optionally do this.
+  # We will leave OMZ base if it was there before, or user can manually purge.
+  
+  log_success "Rollback complete."
+}
+
+show_completion_msg() {
+  echo
+  log_success "Installation Complete!"
+  echo "------------------------------------------------------------------"
+  if grep -qEi "(Microsoft|WSL)" /proc/version &>/dev/null; then
+    echo -e "${YELLOW}WSL DETECTED:${NC}"
+    echo "1. Install MesloLGS NF fonts on Windows manually."
+    echo "2. Configure Windows Terminal to use 'MesloLGS NF'."
+    echo "3. Restart your terminal."
+  else
+    echo "1. Configure your terminal emulator to use 'MesloLGS NF' font."
+    echo "2. Restart your terminal or run 'zsh'."
+  fi
+  echo "------------------------------------------------------------------"
+  echo "Run 'p10k configure' in zsh to set up your prompt."
+  echo "  (Note: If p10k configure fails, ensure your terminal window is at least 80x24)"
+  echo "Use 'z <dir>' to jump around with zoxide!"
+}
+
+# ==============================================================================
+# Helper for Status Checks
+# ==============================================================================
+
+check_status() {
+  log_info "Checking component status..."
+  
+  # Packages
+  if command -v zsh >/dev/null; then log_success "zsh: Installed"; else log_warn "zsh: Missing"; fi
+  if command -v git >/dev/null; then log_success "git: Installed"; else log_warn "git: Missing"; fi
+  if command -v curl >/dev/null; then log_success "curl: Installed"; else log_warn "curl: Missing"; fi
+  
+  # OMZ
+  if [ -d "$HOME/.oh-my-zsh" ]; then log_success "Oh My Zsh: Installed"; else log_warn "Oh My Zsh: Missing"; fi
+  
+  # P10k
+  if [ -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k" ]; then 
+    log_success "Powerlevel10k: Installed"
+  else 
+    log_warn "Powerlevel10k: Missing"
+  fi
+  
+  # Cool Tools
+  if command -v fzf >/dev/null; then log_success "fzf: Installed"; else log_warn "fzf: Missing"; fi
+  if command -v zoxide >/dev/null; then log_success "zoxide: Installed"; else log_warn "zoxide: Missing"; fi
+  if command -v eza >/dev/null; then log_success "eza: Installed"; else log_warn "eza: Missing"; fi
+}
+
+# ==============================================================================
+# Main Execution
+# ==============================================================================
+
 while getopts ":rhd" opt; do
   case "$opt" in
-    r)
-      # Hidden rollback flag toggles the cleanup flow.
-      ROLLBACK_REQUESTED=true
-      ;;
-    d)
-      DRY_RUN=true
-      ;;
-    h)
-      usage
-      exit 0
-      ;;
-    \?)
-      echo "Invalid option: -$OPTARG" >&2
-      usage
-      exit 1
-      ;;
+    r) ROLLBACK_REQUESTED=true ;;
+    d) DRY_RUN=true ;;
+    h) usage; exit 0 ;;
+    \?) log_error "Invalid option: -$OPTARG"; usage; exit 1 ;;
   esac
-  done
-shift $((OPTIND - 1))
+done
 
-# Dry run mode: print environment info and exit
-if [ "$DRY_RUN" = true ]; then
-  echo "AutoZSH dry run: environment check only."
-  echo "----------------------------------------"
-  echo "User: $(whoami)"
-  echo "Home directory: $HOME"
-  echo -n "apt available: "
-  if command -v apt >/dev/null 2>&1; then echo "yes"; else echo "no"; fi
-  echo -n "sudo available: "
-  if command -v sudo >/dev/null 2>&1; then echo "yes"; else echo "no"; fi
-  echo -n "Root privileges: "
-  if [ "$EUID" -eq 0 ]; then echo "yes"; else echo "no"; fi
-  echo -n "Internet connectivity: "
-  if curl -fsSL https://ohmyz.sh >/dev/null 2>&1; then echo "yes"; else echo "no"; fi
-  # Print detected package manager
-  PKG_MANAGER=""
-  if command -v apt >/dev/null 2>&1; then
-    PKG_MANAGER="apt"
-  elif command -v dnf >/dev/null 2>&1; then
-    PKG_MANAGER="dnf"
-  elif command -v pacman >/dev/null 2>&1; then
-    PKG_MANAGER="pacman"
-  elif command -v brew >/dev/null 2>&1; then
-    PKG_MANAGER="brew"
-  else
-    PKG_MANAGER="unknown"
-  fi
-  echo "Detected package manager: $PKG_MANAGER"
-  echo "----------------------------------------"
-  echo "No changes made."
-  exit 0
-fi
-
-# Exit early if the caller asked for a rollback-only run.
 if [ "$ROLLBACK_REQUESTED" = true ]; then
   rollback
   exit 0
 fi
 
-# Installation mode begins here. Confirm we are on an apt-based system before continuing.
-if ! command -v apt >/dev/null 2>&1; then
-  echo "apt not found on PATH. This installer currently supports Debian/Ubuntu systems only." >&2
-  exit 1
+if [ "$DRY_RUN" = true ]; then
+  show_banner
+  log_info "Dry Run Mode Enabled. Checking environment..."
+  check_dependencies
+  prepare_environment
+  check_status
+  log_success "Dry run complete."
+  exit 0
 fi
 
-# We need root access for package installation; use sudo when available.
-if [ "$EUID" -ne 0 ]; then
-  if command -v sudo >/dev/null 2>&1; then
-    SUDO="sudo"
-  else
-    echo "This installer needs root privileges for package installs. Re-run with sudo or as root." >&2
-    exit 1
-  fi
-fi
-
-if [ -n "$SUDO" ]; then
-  echo "Using sudo for package installation. You may be prompted for your password."
-  echo
-  echo
-fi
-
-# Auto-detect package manager
-PKG_MANAGER=""
-if command -v apt >/dev/null 2>&1; then
-  PKG_MANAGER="apt"
-elif command -v dnf >/dev/null 2>&1; then
-  PKG_MANAGER="dnf"
-elif command -v pacman >/dev/null 2>&1; then
-  PKG_MANAGER="pacman"
-elif command -v brew >/dev/null 2>&1; then
-  PKG_MANAGER="brew"
-else
-  PKG_MANAGER="unknown"
-fi
-
-if [ "$PKG_MANAGER" != "apt" ]; then
-  echo "Detected package manager: $PKG_MANAGER"
-  echo "This installer currently supports Debian/Ubuntu systems with apt only."
-  exit 1
-fi
-
-# ensure_clone is a reusable helper that keeps git repositories up to date without breaking re-runs.
-ensure_clone() {
-  local repo="$1"   # Repository URL we want to ensure exists locally.
-  local dest="$2"   # Destination path on disk where the repo should live.
-
-  if [ -d "$dest/.git" ]; then
-    echo "Updating existing $(basename "$dest")..."
-    if ! git -C "$dest" pull --ff-only; then
-      echo "Failed to update repository at $dest" >&2
-      exit 1
-    fi
-  elif [ -d "$dest" ]; then
-    echo "Skipping clone of $repo because $dest already exists and is not a git repo."
-  else
-    if ! git clone "$repo" "$dest"; then
-      echo "Failed to clone $repo into $dest" >&2
-      exit 1
-    fi
-  fi
-}
-# Install core shell binary; ${SUDO} is empty when already root.
-echo "Installing ZSH..."
-if ! ${SUDO} apt install -y zsh; then
-  echo "Failed to install zsh via apt." >&2
-  exit 1
-fi
-echo
-echo
-# Oh My Zsh bootstrap script sets up ~/.oh-my-zsh and drops a starter ~/.zshrc.
-echo "Installing Oh-My-Zsh..."
-# Remove existing .oh-my-zsh directory if it exists
+# Existing Install Check
 if [ -d "$HOME/.oh-my-zsh" ]; then
-  echo "Removing existing .oh-my-zsh directory..."
-  rm -rf "$HOME/.oh-my-zsh"
-fi
-if ! RUNZSH=no CHSH=no curl -fsSL "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh" | bash; then
-  echo "Oh My Zsh installer failed; aborting." >&2
-  exit 1
-fi
- 
-echo
-echo
-# Clone or update the Powerlevel10k prompt theme inside the custom themes directory.
-echo "Install PowerLevel10K theme..."
-ZSH_CUSTOM=${ZSH_CUSTOM:-"$HOME/.oh-my-zsh/custom"}
-ensure_clone https://github.com/romkatv/powerlevel10k.git "$ZSH_CUSTOM/themes/powerlevel10k"
- 
-echo
-echo
-# Grab a programmer-friendly font with glyph support; adjust here if you prefer a different face.
-echo "Installing Nerd Fonts..."
-# git clone https://github.com/ryanoasis/nerd-fonts && ./nerd-fonts/install.sh  ## download all fonts
-# git clone https://github.com/ryanoasis/nerd-fonts/tree/master/patched-fonts/FiraMono/Regular/complete && ./nerd-fonts/install.sh FiraMono &
-if ! ${SUDO} apt install -y fonts-firacode; then
-  echo "Failed to install fonts-firacode via apt." >&2
-  exit 1
-fi
- 
-echo
-echo
-# Pull down the helper plugins that improve the interactive experience.
-echo "Download Plugins for autosuggestion and syntax highlighting..."
-ensure_clone https://github.com/zsh-users/zsh-autosuggestions.git "$ZSH_CUSTOM/plugins/zsh-autosuggestions" 
-ensure_clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" 
-
-echo
-echo
-# Create a safety net before we start editing the user's configuration file.
-# Todo: consider allowing opt-out for heavy customizers who track dotfiles in git.
-
-if [ -f "$HOME/.zshrc" ]; then
-  BACKUP_PATH="$HOME/.zshrc.autozsh.$(date +%Y%m%d%H%M%S).bak"
-  if cp "$HOME/.zshrc" "$BACKUP_PATH"; then
-    echo "Backed up ~/.zshrc to $BACKUP_PATH"
-  else
-    echo "Failed to create backup at $BACKUP_PATH" >&2
-    exit 1
-  fi
-  echo
-  echo
-fi
-
-# Flip the default theme to Powerlevel10k if it is not already active.
-echo "Setting Powerlevel10k theme..."
-if grep -q 'ZSH_THEME="powerlevel10k/powerlevel10k"' "$HOME/.zshrc"; then
-  echo "Theme already set."
-elif grep -q '^ZSH_THEME=' "$HOME/.zshrc"; then
-  # Use | as delimiter to avoid issues with slashes in the replacement string.
-  sed -i '0,/^ZSH_THEME=.*/s|^ZSH_THEME=.*|ZSH_THEME="powerlevel10k/powerlevel10k"|' "$HOME/.zshrc"
-else
-  # Append at the end if the file never declared a theme; rare but safe.
-  echo 'ZSH_THEME="powerlevel10k/powerlevel10k"' >> "$HOME/.zshrc"
-fi
-
-echo
-echo
-# Turn on command autocorrection (corrects minor typos) when the flag is missing or commented out.
-echo "Enabling AutoCorrection..."
-if grep -q '^ENABLE_CORRECTION' "$HOME/.zshrc"; then
-  echo "AutoCorrection already enabled."
-elif grep -q '^# *ENABLE_CORRECTION="true"' "$HOME/.zshrc"; then
-  # Uncomment a previously commented line that already uses the explicit ="true" syntax.
-  sed -i '0,/^# *ENABLE_CORRECTION="true"/s//ENABLE_CORRECTION="true"/' "$HOME/.zshrc"
-elif grep -q '^# *ENABLE_CORRECTION' "$HOME/.zshrc"; then
-  # Swap any generic commented form with our preferred explicit value.
-  sed -i '0,/^# *ENABLE_CORRECTION/s//ENABLE_CORRECTION="true"/' "$HOME/.zshrc"
-else
-  # Fall back to appending the directive when it never existed before.
-  echo 'ENABLE_CORRECTION="true"' >> "$HOME/.zshrc"
-fi
-
-echo
-echo
-# Merge our required plugins with anything the user already had configured.
-echo "Enabling plugins..."
-required_plugins=("git" "zsh-autosuggestions" "zsh-syntax-highlighting")
-# Grab the first plugins= line, if any; `|| true` keeps a missing match from breaking the script.
-plugins_line=$(grep -m1 '^plugins=' "$HOME/.zshrc" || true)
-if [ -z "${plugins_line}" ]; then
-  echo "plugins=(${required_plugins[*]})" >> "$HOME/.zshrc"
-else
-  # shellcheck disable=SC2206
-  # Split the existing plugin list into a bash array so we can de-duplicate entries.
-  current_plugins=(${plugins_line#plugins=(})
-  current_plugins=("${current_plugins[@]%)}")
-  declare -A seen=()
-  dedup=()
-  for plugin in "${current_plugins[@]}"; do
-    # Strip stray characters (commas, trailing parentheses) before tracking values.
-    clean_plugin=${plugin//[^[:alnum:]\-_]/}
-    if [ -n "$clean_plugin" ] && [ -z "${seen[$clean_plugin]:-}" ]; then
-      dedup+=("$clean_plugin")
-      seen["$clean_plugin"]=1
+    echo -e "${YELLOW}AutoZSH seems to be installed (found ~/.oh-my-zsh).${NC}"
+    read -rp "Do you want to uninstall/reset current setup? [y/N] " response
+    if [[ "$response" =~ ^[yY]$ ]]; then
+        rollback
+        # After rollback, we can exit or continue. Usually rollback means "remove it".
+        # If user wants to reinstall, they can run the script again.
+        # But wait, if they say 'reset', maybe they want to reinstall immediately?
+        # The request said "trigger uninstall confirmation".
+        # Let's ask if they want to proceed with fresh install.
+        read -rp "Uninstall complete. Proceed with fresh installation? [y/N] " reinstall_response
+        if [[ ! "$reinstall_response" =~ ^[yY]$ ]]; then
+            exit 0
+        fi
+    else
+        log_info "Aborting installation to prevent overwriting existing setup."
+        exit 0
     fi
-  done
-  for plugin in "${required_plugins[@]}"; do
-    if [ -z "${seen[$plugin]:-}" ]; then
-      dedup+=("$plugin")
-      seen["$plugin"]=1
-    fi
-  done
-  new_plugins_line="plugins=(${dedup[*]})"
-  if [ "$new_plugins_line" != "$plugins_line" ]; then
-    # Replace only the first plugins= line, escaping slashes to keep sed happy.
-    escaped_new_line=$(printf '%s\n' "$new_plugins_line" | sed 's/[\/&]/\\&/g')
-    sed -i "0,/^plugins=.*/s//${escaped_new_line}/" "$HOME/.zshrc"
-  else
-    echo "Required plugins already enabled."
-  fi
 fi
 
 
-echo
-echo "Installation complete."
-# Remind learners that configuration changes take effect the next time zsh starts.
-echo "Open a new zsh session (or run 'zsh') to load the updated configuration."
-echo "Once inside zsh, run 'p10k configure' to customize the Powerlevel10k prompt."
+
+show_banner
+log_info "Starting AutoZSH Installation..."
+
+check_dependencies
+prepare_environment
+install_packages
+install_omz
+install_p10k
+install_cool_tools
+install_fonts
+install_plugins
+configure_zshrc
+set_default_shell
+show_completion_msg
